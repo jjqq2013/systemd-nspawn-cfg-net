@@ -57,3 +57,4 @@ ssh 10.8.8.2
 ```
 Of course you need enter the container to prepare ssh user and keys or sshd_config.
 
+furthermore, you can access any ip that can be accessed from the host.
