@@ -17,8 +17,9 @@ IP_PREFIX=10.8.8
 if [[ $FLOCK_DONE != 1 ]]; then
   CTR_NAME=${1:?require next argument as a running container name, usually the name of the image file or dir}
 
-  # check the container existence and get its pid so can enter its net namespace later
-  CTR_PID=$(machinectl show "$CTR_NAME" --property=Leader --value)
+  # check the container existence and get its pid so can enter its net namespace later.
+  # Note: machinectl show ... --value option is not supported in Xenial.
+  CTR_PID=$(machinectl show "$CTR_NAME" --property=Leader | grep -E --only-matching '[0-9]+')
   # systemd-nspawn will use only the first 11 chars to build veth name
   HOST_VETH_NAME=ve-$(cut --characters=1-11 <<< "$CTR_NAME")
 
@@ -26,7 +27,7 @@ if [[ $FLOCK_DONE != 1 ]]; then
   # run myself within an exclusive lock
 
   export HOST_VETH_NAME CTR_PID
-  exec flock --exclusive /run/systemd-nspawn-ip.lock bash <<__EOF_FLOCK_STDIN
+  exec flock --exclusive /run/systemd-nspawn-cfg-net.lock bash <<__EOF_FLOCK_STDIN
     set -e -o pipefail -x # exit on error, enable command trace
     FLOCK_DONE=1 "$0" "$@"
 __EOF_FLOCK_STDIN
@@ -35,7 +36,7 @@ fi
 
 # get all ip related the ip range, both host and containers, encode them into a comma started and comma separated string,
 # e.g. ",10.8.8.1,172.1.1.1,"
-IP_LIST=,$((machinectl list --max-addresses=all --all | grep --perl-regexp --only-matching "(?<= )$IP_PREFIX\.[0-9]+(?=(?:,|$))" | sort --unique || true) | tr '\n' ',')
+IP_LIST=,$((machinectl list --max-addresses=all | grep --perl-regexp --only-matching "(?<= )$IP_PREFIX\.[0-9]+(?=(?:,|$))" | sort --unique || true) | tr '\n' ',')
 
 function config_ip() {
   if [[ $_VETH_NAME == host0 ]]; then
@@ -107,5 +108,11 @@ fi
 
 # allow ip_forward, otherwise package can not go out through real nic
 echo 1 > /proc/sys/net/ipv4/ip_forward
+
+# copy host side resolv.conf to the container
+if ! diff /etc/resolv.conf /proc/$CTR_PID/root/etc/resolv.conf >/dev/null; then
+  rm -f /proc/$CTR_PID/root/etc/resolv.conf
+  cp /etc/resolv.conf /proc/$CTR_PID/root/etc/resolv.conf
+fi
 
 echo $CTR_IP
